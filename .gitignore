@@ -1,0 +1,16 @@
+data/
+runs/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.env
+*.ckpt
+*.pt
+*.pth
+*.npz
+*.npy
+*.log
+.vscode/*
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/tasks.json

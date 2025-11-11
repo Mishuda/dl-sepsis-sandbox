@@ -1,0 +1,3 @@
+[submodule "external/pvae"]
+	path = external/pvae
+	url = https://github.com/emilemathieu/pvae

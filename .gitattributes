@@ -1,0 +1,19 @@
+# Default: normalize text files and use LF line endings
+* text=auto eol=lf
+
+# Force LF for code/scripts
+*.sh   text eol=lf
+*.py   text eol=lf
+*.R    text eol=lf
+Makefile text eol=lf
+
+# Don’t touch notebooks and binary files
+*.ipynb -text
+*.png   -text
+*.jpg   -text
+*.pdf   -text
+*.pt    -text
+*.pth   -text
+*.ckpt  -text
+*.npy   -text
+*.npz   -text

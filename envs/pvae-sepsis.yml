@@ -1,0 +1,6 @@
+name: pvae-sepsis
+channels:
+  - defaults
+dependencies:
+  - python=3.11
+prefix: /home/michalis_lazar/miniconda3/envs/pvae-sepsis

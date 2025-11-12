@@ -102,16 +102,24 @@ def sample_and_kl(mu: torch.Tensor, lv: torch.Tensor, args) -> tuple[torch.Tenso
         z = q.rsample()
         kl = kl_normal(mu, lv)
         return z, kl
+
+    # Poincaré    
     else:
-        # Poincaré Wrapped Normal (constructor order: (manifold, loc, scale))
+        #
         from pvae.manifolds.poincareball import PoincareBall
         from pvae.distributions.wrapped_normal import WrappedNormal
-        M = PoincareBall(c=args.curv)
-        q = WrappedNormal(M, mu, torch.exp(0.5 * lv))
-        p = WrappedNormal(M, torch.zeros_like(mu), torch.ones_like(mu))
+
+        M = PoincareBall(mu.size(-1), c=args.curv)
+        mu = mu.float()
+        lv = lv.float()
+
+        q = WrappedNormal(mu, torch.exp(0.5 * lv), M)
+        p = WrappedNormal(torch.zeros_like(mu), torch.ones_like(mu), M)
+
         z = q.rsample()
         kl = (q.log_prob(z) - p.log_prob(z)).sum(-1).mean()
         return z, kl
+
 
 
 # Collate: pad/clip to a fixed global T_pad (computed from TRAIN set)
@@ -236,7 +244,7 @@ def main(args):
 
     dec = MLPDecoder(out_dim=F * T_pad, z=args.latent, h=args.hid).to(device)
     assert dec.net[-1].out_features == F*T_pad, "Decoder output dim mismatch"
-    
+
     opt = torch.optim.Adam([*enc.parameters(), *dec.parameters()], lr=args.lr)
 
 

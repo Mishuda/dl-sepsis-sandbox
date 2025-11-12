@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pack_padded_sequence
+import contextlib
 
 
 # Allow importing from the pVAE submodule (external/pvae/*)
@@ -186,8 +187,9 @@ def eval_elbo(enc: nn.Module, dec: nn.Module, loader: DataLoader, device, args) 
     enc.eval(); dec.eval()
     tot, n = 0.0, 0
     for b in loader:
-        x = b["x"].to(device).float()      # [B,T_pad,F]
-        m = b["mask"].to(device).float()   # [B,T_pad,F]
+
+        x = b["x"].to(device, non_blocking=True).float()      # [B,T_pad,F]
+        m = b["mask"].to(device, non_blocking=True).float()   # [B,T_pad,F]
         mu, lv = enc(x, b["len"])
         z, kl = sample_and_kl(mu, lv, args)
         # decoder was built for out_dim = T_pad*F
@@ -215,10 +217,16 @@ def main(args):
     T_pad, F = infer_TF(tr)
     # Build collate that always pads/clips to train T_pad; validation must fit within it.
     collate_pad = make_collate_pad(T_pad)
+    print(f"[data] T_pad={T_pad}, F={F} | train_N={len(tr)}, val_N={len(va)} | device={device.type}")
+
 
     # Loaders
-    train_loader = DataLoader(tr, batch_size=args.batch, shuffle=True, collate_fn=collate_pad)
-    val_loader   = DataLoader(va, batch_size=args.batch, shuffle=False, collate_fn=collate_pad)
+    train_loader = DataLoader(tr, batch_size=args.batch, shuffle=True,
+                          collate_fn=collate_pad, pin_memory=(device.type=="cuda"))
+    val_loader   = DataLoader(va, batch_size=args.batch, shuffle=False,
+                          collate_fn=collate_pad, pin_memory=(device.type=="cuda"))
+
+    
 
     # Models
     enc = LSTMEncoder(
@@ -227,14 +235,18 @@ def main(args):
     ).to(device)
 
     dec = MLPDecoder(out_dim=F * T_pad, z=args.latent, h=args.hid).to(device)
-
+    assert dec.net[-1].out_features == F*T_pad, "Decoder output dim mismatch"
+    
     opt = torch.optim.Adam([*enc.parameters(), *dec.parameters()], lr=args.lr)
-    scaler = torch.cuda.amp.GradScaler(enabled=(args.amp and device.type == "cuda"))
+
 
     # Checkpoints
     ckpt_dir = Path("runs/ckpts"); ckpt_dir.mkdir(parents=True, exist_ok=True)
     best_val = math.inf
+    use_amp = (args.amp and device.type == "cuda")
+    scaler = torch.amp.GradScaler(device="cuda") if use_amp else torch.amp.GradScaler(enabled=False)
 
+    # Training loop
     for epoch in range(args.epochs):
         enc.train(); dec.train()
         sum_recon = 0.0; sum_kl = 0.0; sum_loss = 0.0; n_seen = 0
@@ -242,20 +254,41 @@ def main(args):
         beta_now = args.beta * min(1.0, (epoch + 1) / max(1, args.kl_warm))
 
         for b in train_loader:
-            x = b["x"].to(device).float()
-            m = b["mask"].to(device).float()
+            # x = b["x"].to(device).float()
+            # m = b["mask"].to(device).float()
+            # lengths = b["len"]
+
+
+
+            # opt.zero_grad(set_to_none=True)
+            # amp_ctx = torch.amp.autocast('cuda') if use_amp else contextlib.nullcontext()
+            # with amp_ctx:
+            #     mu, lv = enc(x, lengths)
+            #     z, kl = sample_and_kl(mu, lv, args)
+            #     B, T, F_ = x.shape
+            #     xhat = dec(z).view(B, T, F_)
+            #     recon = mse_masked(xhat, x, m)
+            #     loss = recon + beta_now * kl
+
+            #     #
+            #     x = b["x"].to(device, non_blocking=True).float()
+            #     m = b["mask"].to(device, non_blocking=True).float()
+            # device copies (single time, non_blocking)
+            x = b["x"].to(device, non_blocking=True).float()
+            m = b["mask"].to(device, non_blocking=True).float()
             lengths = b["len"]
 
             opt.zero_grad(set_to_none=True)
-
-            with torch.cuda.amp.autocast(enabled=(args.amp and device.type == "cuda")):
+            amp_ctx = torch.amp.autocast('cuda') if use_amp else contextlib.nullcontext()
+            with amp_ctx:
+                #
                 mu, lv = enc(x, lengths)
                 z, kl = sample_and_kl(mu, lv, args)
-
                 B, T, F_ = x.shape
                 xhat = dec(z).view(B, T, F_)
                 recon = mse_masked(xhat, x, m)
                 loss = recon + beta_now * kl
+
 
             scaler.scale(loss).backward()
             torch.nn.utils.clip_grad_norm_([*enc.parameters(), *dec.parameters()], args.clip)

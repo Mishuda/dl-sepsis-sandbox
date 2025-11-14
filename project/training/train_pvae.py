@@ -109,11 +109,15 @@ def sample_and_kl(mu: torch.Tensor, lv: torch.Tensor, args) -> tuple[torch.Tenso
         from pvae.manifolds.poincareball import PoincareBall
         from pvae.distributions.wrapped_normal import WrappedNormal
 
-        M = PoincareBall(mu.size(-1), c=args.curv)
-        mu = mu.float()
+        # M = PoincareBall(mu.size(-1), c=args.curv)
+        # mu = mu.float()
+        # q = WrappedNormal(mu, torch.exp(0.5 * lv), M)
+        M = PoincareBall(dim=mu.shape[-1], c=args.curv)
+        mu = M.projx(mu)  # project onto valid Poincaré ball
+        q = WrappedNormal(mu, torch.exp(0.5 * lv), M)
+
         lv = lv.float()
 
-        q = WrappedNormal(mu, torch.exp(0.5 * lv), M)
         p = WrappedNormal(torch.zeros_like(mu), torch.ones_like(mu), M)
 
         z = q.rsample()
